@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Job-Shop Scheduling — Actor-Critic | ĐATN 2026</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <span class="logo">🏭</span>
+    <div>
+      <div class="title">Job-Shop Scheduling — Actor-Critic Visualization</div>
+      <div class="subtitle">ĐATN 2026 &nbsp;|&nbsp; Bạch Công Quân &nbsp;|&nbsp; GVHD: ThS. Tạ Chí Hiếu</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="server-badge">🟢 Flask Server</div>
+    <div class="nav-tabs">
+      <button class="nav-tab active" id="tabViz"  onclick="switchTab('viz')">🎬 Trực quan hóa</button>
+      <button class="nav-tab"        id="tabEval" onclick="switchTab('eval')">📊 Đánh giá</button>
+      <button class="nav-tab"        id="tabReal" onclick="switchTab('real')">🏫 Thực tế</button>
+    </div>
+    <button class="train-btn" onclick="openTrainModal()">⚡ Train Model</button>
+  </div>
+</header>
+
+<!-- TAB 1: VISUALIZATION -->
+<div class="app" id="vizApp">
+  <aside class="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-label">📦 Instance</div>
+      <div id="instanceList"><div class="skeleton-btn"></div><div class="skeleton-btn"></div></div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">🤖 Algorithm</div>
+      <div class="algo-list">
+        <button class="algo-btn active" data-algo="a2c" onclick="selectAlgo('a2c')">
+          <span class="algo-dot" style="background:#4f8ef7"></span><span>A2C (RL Agent)</span><span class="algo-tag ai-tag">AI</span></button>
+        <button class="algo-btn" data-algo="fifo" onclick="selectAlgo('fifo')">
+          <span class="algo-dot" style="background:#fb923c"></span><span>FIFO</span><span class="algo-tag">Rule</span></button>
+        <button class="algo-btn" data-algo="spt" onclick="selectAlgo('spt')">
+          <span class="algo-dot" style="background:#34d399"></span><span>SPT</span><span class="algo-tag">Rule</span></button>
+        <button class="algo-btn" data-algo="lpt" onclick="selectAlgo('lpt')">
+          <span class="algo-dot" style="background:#a78bfa"></span><span>LPT</span><span class="algo-tag">Rule</span></button>
+        <button class="algo-btn" data-algo="edd" onclick="selectAlgo('edd')">
+          <span class="algo-dot" style="background:#f87171"></span><span>EDD</span><span class="algo-tag">Rule</span></button>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">🔀 So sánh</div>
+      <button class="compare-btn" id="compareBtn" onclick="toggleCompare()">So sánh tất cả algorithms</button>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">🎚️ Tốc độ animation</div>
+      <div class="speed-row">
+        <input type="range" id="speedSlider" min="1" max="12" value="5"
+               oninput="speedMult=+this.value;document.getElementById('speedVal').textContent=this.value+'×'">
+        <span class="speed-val" id="speedVal">5×</span>
+      </div>
+    </div>
+    <div class="sidebar-section" style="flex:1">
+      <div class="sidebar-label">🎨 Jobs</div>
+      <div id="legendContainer" class="legend"></div>
+    </div>
+  </aside>
+  <div class="main">
+    <div class="controls">
+      <button class="ctrl-btn play" id="playBtn" onclick="togglePlay()">▶ Play</button>
+      <button class="ctrl-btn reset" onclick="resetAnim()">↺ Reset</button>
+      <div class="progress-wrap"><div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div></div>
+      <span class="time-label" id="timeLabel">t = 0</span>
+      <span class="algo-label" id="algoLabel">A2C</span>
+    </div>
+    <div class="metrics">
+      <div class="metric-card info"><div class="metric-label">⏱ Makespan</div><div class="metric-value" id="metMakespan">—</div><div class="metric-sub">Tổng thời gian hoàn thành</div></div>
+      <div class="metric-card good"><div class="metric-label">📈 Utilization</div><div class="metric-value" id="metUtil">—</div><div class="metric-sub">Hiệu suất sử dụng máy</div></div>
+      <div class="metric-card warn"><div class="metric-label">💤 Idle Time</div><div class="metric-value" id="metIdle">—</div><div class="metric-sub">Thời gian máy rỗi</div></div>
+      <div class="metric-card special"><div class="metric-label">🎯 vs FIFO</div><div class="metric-value" id="metVsFifo">—</div><div class="metric-sub" id="metVsFifoSub">So sánh với FIFO</div></div>
+    </div>
+    <div class="canvas-area" id="canvasArea">
+      <div id="loadingOverlay" class="loading-overlay"><div class="spinner"></div><div class="loading-text">Đang tải dữ liệu...</div></div>
+      <div id="ganttWrapper" class="gantt-wrapper">
+        <div class="gantt-title-row"><span id="ganttTitle" class="gantt-title-text">—</span><span id="ganttBadge" class="gantt-badge"></span></div>
+        <canvas id="mainCanvas"></canvas>
+      </div>
+      <div id="compareGrid" class="compare-grid" style="display:none"></div>
+    </div>
+  </div>
+</div>
+
+<!-- TAB 2: EVALUATION -->
+<div id="evalPanel" style="display:none;flex:1;overflow:hidden;flex-direction:column;">
+  <div class="eval-toolbar">
+    <span class="eval-toolbar-title">📊 Đánh giá tổng hợp — A2C vs Baselines</span>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <span class="eval-note">Phân loại theo độ phức tạp bài toán</span>
+      <button class="eval-refresh-btn" onclick="loadEvaluation(true)">🔄 Làm mới</button>
+    </div>
+  </div>
+  <div class="eval-content" id="evalContent">
+    <div class="eval-loading" id="evalLoading"><div class="spinner"></div><div class="loading-text">Đang chạy đánh giá...</div></div>
+    <div id="evalResult" style="display:none;"></div>
+  </div>
+</div>
+
+<!-- TAB 3: THỰC TẾ — XẾP LỊCH DẠY (6 ngày × 2 buổi) -->
+<div id="realPanel">
+  <div class="real-toolbar">
+    <span class="real-toolbar-title">🏫 Ứng dụng thực tế — Xếp lịch dạy học với A2C</span>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <span style="font-size:11px;color:var(--muted)">
+        <b style="color:var(--accent)">Job</b>=Lớp học &nbsp;
+        <b style="color:var(--green)">Machine</b>=Slot (Ngày-Buổi) &nbsp;
+        <b style="color:var(--accent2)">Makespan</b>=Tổng buổi
+      </span>
+      <button class="eval-refresh-btn" onclick="resetRT()">↺ Reset</button>
+    </div>
+  </div>
+
+  <div class="real-body">
+    <div class="real-config">
+
+      <div class="real-section">
+        <div class="real-section-title">🔗 Ánh xạ JSSP → Thực tế</div>
+        <div class="mapping-cards" style="grid-template-columns:1fr 1fr;">
+          <div class="mapping-card"><div class="mc-top">Khái niệm</div><div class="mc-jssp">Job</div><div class="mc-arrow">↕</div><div class="mc-real">Lớp học</div></div>
+          <div class="mapping-card"><div class="mc-top">Khái niệm</div><div class="mc-jssp">Machine</div><div class="mc-arrow">↕</div><div class="mc-real">Slot S/C</div></div>
+          <div class="mapping-card"><div class="mc-top">Khái niệm</div><div class="mc-jssp">Operation</div><div class="mc-arrow">↕</div><div class="mc-real">1 buổi học</div></div>
+          <div class="mapping-card"><div class="mc-top">Mục tiêu</div><div class="mc-jssp">Makespan</div><div class="mc-arrow">↕</div><div class="mc-real">Tổng buổi</div></div>
+        </div>
+      </div>
+
+      <div class="real-section">
+        <div class="real-section-title">📚 Danh sách lớp (Jobs)</div>
+        <div style="font-size:10px;color:var(--muted);margin-bottom:8px;line-height:1.5;">
+          6 ngày (T2–T7) × 2 buổi (Sáng/Chiều) = 12 slots/tuần.<br>
+          Click slot để bật/tắt cho từng lớp.
+        </div>
+        <div id="rtClassList"></div>
+        <button class="real-add-btn" onclick="addCls()">+ Thêm lớp học</button>
+      </div>
+
+      <button class="real-run-btn" id="rtRunBtn" onclick="runTeacherSchedule()">
+        🚀 Xếp lịch
+      </button>
+    </div>
+
+    <div class="real-result">
+      <div id="rtResultArea">
+        <div class="real-placeholder">
+          <div class="ph-icon">📅</div>
+          <div class="ph-title">Chưa có lịch dạy</div>
+          <div class="ph-sub">
+            Cấu hình các lớp với <strong>6 ngày × 2 buổi (Sáng/Chiều)</strong><br>
+            Rồi nhấn "Xếp lịch với A2C" để xem A2C tìm cách xen kẽ tối ưu
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Train Modal -->
+<div class="modal-overlay" id="trainModal" onclick="closeTrainModal(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">⚡ Huấn luyện A2C Model</div>
+      <button class="modal-close" onclick="closeTrainModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <label class="form-label">Instance</label>
+      <select id="trainInstance" class="form-select">
+        <option value="3x3">Simple 3×3</option>
+        <option value="random_4x4">Demo 4×4</option>
+        <option value="random_5x5">Demo 5×5</option>
+        <option value="ft06" selected>FT06 Benchmark 6×6</option>
+        <option value="ft10">FT10 Benchmark 10×10</option>
+      </select>
+      <label class="form-label" style="margin-top:12px">Số Episodes</label>
+      <input type="number" id="trainEpisodes" class="form-input" value="1000" min="100" max="10000" step="100">
+      <div id="trainProgress" style="display:none;margin-top:16px">
+        <div class="train-progress-label">
+          <span id="trainProgressText">Đang training...</span>
+          <span id="trainProgressPct">0%</span>
+        </div>
+        <div class="progress-bar" style="height:8px;margin-top:6px">
+          <div class="progress-fill" id="trainProgressFill" style="width:0%"></div>
+        </div>
+        <div id="trainLog" class="train-log"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeTrainModal()">Đóng</button>
+      <button class="btn-primary" id="trainStartBtn" onclick="startTraining()">🚀 Bắt đầu Train</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
