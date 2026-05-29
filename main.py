@@ -294,6 +294,9 @@ def _run_a2c(jobs_data, instance_name: str) -> dict:
     else:
         cache_key = None
 
+# ✅ Set seed cố định → 20 episodes luôn cho CÙNG kết quả
+    np.random.seed(42)
+
     if os.path.exists(model_path):
         agent = A2CAgentNumpy(
             state_dim =env.observation_space.shape[0],
@@ -301,9 +304,6 @@ def _run_a2c(jobs_data, instance_name: str) -> dict:
             hidden_dim=128,
         )
         agent.load(model_path)
-
-        # ✅ Set seed cố định → 20 episodes luôn cho CÙNG kết quả
-        np.random.seed(42)
 
         # Chạy 20 lần, lấy kết quả tốt nhất
         best_ms, best_sched = float("inf"), None

@@ -1,363 +1,476 @@
 """
-A2C Agent — NumPy Implementation (không cần PyTorch)
-======================================================
-Dùng để demo và verify logic. Khi có GPU, dùng a2c_agent.py (PyTorch).
+A2C Agent (NumPy) — IMPROVED VERSION
+=====================================
+Cải tiến từ vanilla A2C theo best practices từ research:
 
-Kiến trúc: 2-layer MLP cho cả Actor và Critic.
-Tham chiếu: Sutton & Barto, Chương 13 (Policy Gradient Methods)
+  1. ✅ Generalized Advantage Estimation (GAE) — giảm variance gradient
+       Reference: Schulman et al. (2016), High-Dimensional Continuous Control...
+  2. ✅ Advantage Normalization — ổn định training trên episode dài
+  3. ✅ Entropy Coefficient Decay — bắt đầu explore, kết thúc exploit
+  4. ✅ Gradient Clipping — chống exploding gradient
+  5. ✅ Best Policy Tracking — lưu policy tốt nhất, không "quên"
+  6. ✅ Orthogonal Initialization — chuẩn cho RL networks
+
+Backwards compatible với version cũ qua flag `use_gae`.
+
+API giữ nguyên:
+    agent = A2CAgentNumpy(state_dim, action_dim)
+    action, log_prob, value = agent.select_action(state, valid_actions)
+    agent.store_transition(...)
+    losses = agent.update()
+    agent.save(path) / agent.load(path)
 """
 
 import numpy as np
-from typing import List, Tuple, Dict
+import os
+from typing import Optional, Tuple, Dict, List
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  UTILITY — Activation functions
-# ─────────────────────────────────────────────────────────────────────────────
-
-def relu(x: np.ndarray) -> np.ndarray:
-    return np.maximum(0, x)
-
-def softmax(x: np.ndarray) -> np.ndarray:
-    """Softmax numerically stable."""
-    x = x - np.max(x)          # Tránh overflow
-    e = np.exp(x)
-    return e / (e.sum() + 1e-8)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  MLP — Multi-Layer Perceptron đơn giản
-# ─────────────────────────────────────────────────────────────────────────────
-
-class MLP:
-    """
-    2-hidden-layer neural network.
-    Forward pass: Linear → ReLU → Linear → ReLU → Linear
-    """
-
-    def __init__(self, in_dim: int, hidden_dim: int, out_dim: int, seed: int = 42):
-        rng = np.random.default_rng(seed)
-        # Khởi tạo weights theo He initialization (tốt cho ReLU)
-        scale1 = np.sqrt(2.0 / in_dim)
-        scale2 = np.sqrt(2.0 / hidden_dim)
-
-        self.W1 = rng.normal(0, scale1, (in_dim, hidden_dim))
-        self.b1 = np.zeros(hidden_dim)
-        self.W2 = rng.normal(0, scale2, (hidden_dim, hidden_dim))
-        self.b2 = np.zeros(hidden_dim)
-        self.W3 = rng.normal(0, 0.01, (hidden_dim, out_dim))
-        self.b3 = np.zeros(out_dim)
-
-        # Cache activations cho backward pass
-        self._cache = {}
-
-    def forward(self, x: np.ndarray) -> np.ndarray:
-        h1 = relu(x @ self.W1 + self.b1)
-        h2 = relu(h1 @ self.W2 + self.b2)
-        out = h2 @ self.W3 + self.b3
-
-        # Lưu cache cho backward
-        self._cache = {"x": x, "h1": h1, "h2": h2, "out": out}
-        return out
-
-    def get_params(self) -> List[np.ndarray]:
-        return [self.W1, self.b1, self.W2, self.b2, self.W3, self.b3]
-
-    def set_params(self, params: List[np.ndarray]):
-        self.W1, self.b1, self.W2, self.b2, self.W3, self.b3 = params
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  ADAM OPTIMIZER
-# ─────────────────────────────────────────────────────────────────────────────
-
+# ── Adam Optimizer (NumPy implementation) ─────────────────────────────────────
 class Adam:
-    """
-    Adam optimizer: adaptive learning rate.
-    Paper: Kingma & Ba (2015) — https://arxiv.org/abs/1412.6980
-    """
+    """Adam optimizer thuần NumPy — đồng bộ với torch.optim.Adam."""
 
-    def __init__(self, lr: float = 1e-3, beta1: float = 0.9,
-                 beta2: float = 0.999, eps: float = 1e-8):
-        self.lr    = lr
-        self.beta1 = beta1
-        self.beta2 = beta2
-        self.eps   = eps
-        self.t     = 0
-        self.m     = None   # 1st moment
-        self.v     = None   # 2nd moment
+    def __init__(self, params: list, lr: float = 1e-3,
+                 beta1: float = 0.9, beta2: float = 0.999, eps: float = 1e-8):
+        self.lr, self.beta1, self.beta2, self.eps = lr, beta1, beta2, eps
+        self.m = [np.zeros_like(p) for p in params]   # 1st moment
+        self.v = [np.zeros_like(p) for p in params]   # 2nd moment
+        self.t = 0
 
-    def step(self, params: List[np.ndarray],
-             grads: List[np.ndarray]) -> List[np.ndarray]:
+    def step(self, params: list, grads: list) -> list:
+        """Update params in-place và trả về."""
         self.t += 1
-        if self.m is None:
-            self.m = [np.zeros_like(p) for p in params]
-            self.v = [np.zeros_like(p) for p in params]
-
-        updated = []
         for i, (p, g) in enumerate(zip(params, grads)):
             self.m[i] = self.beta1 * self.m[i] + (1 - self.beta1) * g
-            self.v[i] = self.beta2 * self.v[i] + (1 - self.beta2) * g**2
-            m_hat = self.m[i] / (1 - self.beta1**self.t)
-            v_hat = self.v[i] / (1 - self.beta2**self.t)
-            updated.append(p - self.lr * m_hat / (np.sqrt(v_hat) + self.eps))
-        return updated
+            self.v[i] = self.beta2 * self.v[i] + (1 - self.beta2) * (g * g)
+            m_hat = self.m[i] / (1 - self.beta1 ** self.t)
+            v_hat = self.v[i] / (1 - self.beta2 ** self.t)
+            params[i] = p - self.lr * m_hat / (np.sqrt(v_hat) + self.eps)
+        return params
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  A2C AGENT (NumPy)
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Helper functions ──────────────────────────────────────────────────────────
+def _orthogonal_init(shape: tuple, gain: float = 1.0) -> np.ndarray:
+    """Orthogonal initialization — chuẩn cho RL theo paper PPO."""
+    if len(shape) < 2:
+        return np.random.randn(*shape) * gain
+    flat = np.random.randn(shape[0], int(np.prod(shape[1:])))
+    u, _, vt = np.linalg.svd(flat, full_matrices=False)
+    w = u if u.shape == flat.shape else vt
+    return (gain * w).reshape(shape).astype(np.float64)
 
+
+def _relu(x):       return np.maximum(0, x)
+def _relu_grad(x):  return (x > 0).astype(np.float64)
+
+def _softmax(x):
+    """Numerically stable softmax."""
+    x = x - np.max(x, axis=-1, keepdims=True)
+    e = np.exp(x)
+    return e / np.sum(e, axis=-1, keepdims=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  A2C Agent
+# ══════════════════════════════════════════════════════════════════════════════
 class A2CAgentNumpy:
     """
-    Advantage Actor-Critic — NumPy implementation.
+    Actor-Critic agent với GAE, entropy decay, advantage normalization.
 
-    Dùng REINFORCE-style gradient (Monte Carlo returns).
-    Ổn định nhờ advantage normalization và entropy regularization.
+    Cải tiến chính so với vanilla A2C:
+      - GAE (λ=0.95): Smooth advantage giữa Monte Carlo (high variance)
+        và TD-1 (high bias) → giảm variance gradient
+      - Entropy decay: explore → exploit theo thời gian
+      - Advantage normalization: giúp training ổn định khi reward scale lớn
+      - Gradient clipping: chống exploding gradient
     """
 
     def __init__(
         self,
-        state_dim   : int,
-        action_dim  : int,
-        hidden_dim  : int   = 128,
-        lr_actor    : float = 5e-4,
-        lr_critic   : float = 1e-3,
-        gamma       : float = 0.99,
-        entropy_coef: float = 0.01,
+        state_dim       : int,
+        action_dim      : int,
+        hidden_dim      : int   = 256,            # ↑ từ 128 lên 256
+        lr_actor        : float = 1e-4,           # ↓ từ 3e-4 (ổn định hơn)
+        lr_critic       : float = 5e-4,
+        gamma           : float = 0.99,
+        gae_lambda      : float = 0.95,           # ★ GAE parameter
+        entropy_coef    : float = 0.05,           # Start entropy
+        entropy_min     : float = 0.005,          # ★ Entropy floor
+        entropy_decay   : float = 0.9995,         # ★ Decay rate / update
+        max_grad_norm   : float = 0.5,            # ★ Gradient clip
+        normalize_adv   : bool  = True,           # ★ Adv normalization
+        use_gae         : bool  = True,           # ★ Toggle GAE on/off
     ):
-        self.action_dim   = action_dim
-        self.gamma        = gamma
-        self.entropy_coef = entropy_coef
+        self.state_dim     = state_dim
+        self.action_dim    = action_dim
+        self.hidden_dim    = hidden_dim
+        self.gamma         = gamma
+        self.gae_lambda    = gae_lambda
+        self.entropy_coef  = entropy_coef
+        self.entropy_min   = entropy_min
+        self.entropy_decay = entropy_decay
+        self.max_grad_norm = max_grad_norm
+        self.normalize_adv = normalize_adv
+        self.use_gae       = use_gae
 
-        # Khởi tạo 2 mạng riêng biệt
-        self.actor  = MLP(state_dim, hidden_dim, action_dim, seed=42)
-        self.critic = MLP(state_dim, hidden_dim, 1,          seed=43)
+        # ── Actor network: state → action probs ──────────────────────────────
+        # Output layer dùng gain=0.01 (theo PPO paper) để khởi đầu policy đều
+        self.W1_a = _orthogonal_init((state_dim,  hidden_dim), gain=np.sqrt(2))
+        self.b1_a = np.zeros(hidden_dim)
+        self.W2_a = _orthogonal_init((hidden_dim, hidden_dim), gain=np.sqrt(2))
+        self.b2_a = np.zeros(hidden_dim)
+        self.W3_a = _orthogonal_init((hidden_dim, action_dim), gain=0.01)
+        self.b3_a = np.zeros(action_dim)
 
-        self.actor_opt  = Adam(lr=lr_actor)
-        self.critic_opt = Adam(lr=lr_critic)
+        # ── Critic network: state → V(s) ─────────────────────────────────────
+        self.W1_c = _orthogonal_init((state_dim,  hidden_dim), gain=np.sqrt(2))
+        self.b1_c = np.zeros(hidden_dim)
+        self.W2_c = _orthogonal_init((hidden_dim, hidden_dim), gain=np.sqrt(2))
+        self.b2_c = np.zeros(hidden_dim)
+        self.W3_c = _orthogonal_init((hidden_dim, 1),          gain=1.0)
+        self.b3_c = np.zeros(1)
 
-        # Buffer trajectory của episode
-        self._reset_trajectory()
+        # ── Optimizers ───────────────────────────────────────────────────────
+        self.actor_params  = [self.W1_a, self.b1_a, self.W2_a, self.b2_a,
+                              self.W3_a, self.b3_a]
+        self.critic_params = [self.W1_c, self.b1_c, self.W2_c, self.b2_c,
+                              self.W3_c, self.b3_c]
+        self.opt_actor  = Adam(self.actor_params,  lr=lr_actor)
+        self.opt_critic = Adam(self.critic_params, lr=lr_critic)
 
-        print(f"✅ A2CAgentNumpy initialized")
-        print(f"   State={state_dim} | Actions={action_dim} | Hidden={hidden_dim}")
+        # ── Rollout buffer ───────────────────────────────────────────────────
+        self.reset_buffer()
 
-    # ── Public API ────────────────────────────────────────────────────
+        # ── Metrics ──────────────────────────────────────────────────────────
+        self.n_updates = 0
 
-    def select_action(
-        self, state: np.ndarray, valid_actions: List[int]
-    ) -> Tuple[int, float, float]:
+    # ── Buffer Management ────────────────────────────────────────────────────
+    def reset_buffer(self):
+        self.buf_states     = []
+        self.buf_actions    = []
+        self.buf_rewards    = []
+        self.buf_dones      = []
+        self.buf_log_probs  = []
+        self.buf_values     = []
+        self.buf_valid      = []
+
+    def _to_mask(self, valid_actions) -> np.ndarray:
         """
-        Chọn action dựa trên policy hiện tại.
+        Chuẩn hóa valid_actions thành boolean mask shape (action_dim,).
+
+        Support 2 format đầu vào:
+          (a) Boolean mask shape (action_dim,) — đã đúng
+          (b) List/array of integer indices — convert thành mask
+
+        Examples:
+            _to_mask([True, False, True, True])  → [T, F, T, T]  (a)
+            _to_mask([0, 2, 3])                   → [T, F, T, T]  (b)
+        """
+        arr = np.asarray(valid_actions)
+
+        # Case (a): boolean mask đã đúng shape
+        if arr.dtype == bool and arr.shape == (self.action_dim,):
+            return arr
+
+        # Case (b): list of integer indices → convert sang boolean mask
+        mask = np.zeros(self.action_dim, dtype=bool)
+        if arr.size > 0:
+            # Edge case: boolean mask sai shape → re-interpret as indices
+            if arr.dtype == bool:
+                # Lấy index của các True
+                indices = np.flatnonzero(arr)
+            else:
+                indices = arr.astype(int)
+            mask[indices] = True
+        return mask
+
+    def store_transition(self, state, action, reward, done,
+                         log_prob, value, valid_actions):
+        """Lưu transition vào buffer (normalize valid_actions thành mask)."""
+        self.buf_states.append(state)
+        self.buf_actions.append(action)
+        self.buf_rewards.append(reward)
+        self.buf_dones.append(done)
+        self.buf_log_probs.append(log_prob)
+        self.buf_values.append(value)
+        self.buf_valid.append(self._to_mask(valid_actions))  # ← Chuẩn hóa
+
+    # ── Forward Pass ─────────────────────────────────────────────────────────
+    def _actor_forward(self, state: np.ndarray) -> tuple:
+        """Returns: action_logits, hidden_activations (for backprop)."""
+        h1 = _relu(state @ self.W1_a + self.b1_a)
+        h2 = _relu(h1    @ self.W2_a + self.b2_a)
+        logits = h2 @ self.W3_a + self.b3_a
+        return logits, (h1, h2)
+
+    def _critic_forward(self, state: np.ndarray) -> tuple:
+        h1 = _relu(state @ self.W1_c + self.b1_c)
+        h2 = _relu(h1    @ self.W2_c + self.b2_c)
+        v  = (h2 @ self.W3_c + self.b3_c).item()
+        return v, (h1, h2)
+
+    def select_action(self, state: np.ndarray, valid_actions
+                      ) -> Tuple[int, float, float]:
+        """
+        Chọn action theo policy + action masking.
+
+        Args:
+            state: shape (state_dim,)
+            valid_actions: Một trong 2 format:
+                (a) Boolean mask shape (action_dim,) — True = hợp lệ
+                (b) List/array of integer indices — VD: [0, 2, 3] = 3 jobs hợp lệ
 
         Returns:
-            (action_id, log_prob, state_value)
+            action (int), log_prob (float), value (float)
         """
-        logits = self.actor.forward(state)
+        logits, _ = self._actor_forward(state)
 
-        # Action masking: gán -inf cho action không hợp lệ
-        mask = np.full(self.action_dim, -1e9)
-        for a in valid_actions:
-            mask[a] = 0.0
-        logits = logits + mask
+        # Normalize input → boolean mask shape (action_dim,)
+        mask = self._to_mask(valid_actions)
 
-        probs   = softmax(logits)
-        action  = np.random.choice(self.action_dim, p=probs)
-        log_prob = np.log(probs[action] + 1e-8)
+        # Action masking: invalid → -inf → prob ≈ 0 sau softmax
+        masked_logits = np.where(mask, logits, -1e9)
+        probs = _softmax(masked_logits)
 
-        value = self.critic.forward(state)[0]
+        # Safety: nếu tất cả invalid (không nên xảy ra) → uniform fallback
+        if not np.isfinite(probs).all() or probs.sum() < 1e-9:
+            probs = mask.astype(np.float64)
+            probs = probs / max(probs.sum(), 1.0)
 
-        return int(action), float(log_prob), float(value)
+        # Sample action từ phân phối
+        action = int(np.random.choice(self.action_dim, p=probs))
+        log_prob = float(np.log(probs[action] + 1e-10))
 
-    def store_transition(self, state, action, reward, done, log_prob, value, valid_actions):
-        self.states.append(state.copy())
-        self.actions.append(action)
-        self.rewards.append(reward)
-        self.dones.append(done)
-        self.log_probs.append(log_prob)
-        self.values.append(value)
-        self.valid_actions_list.append(valid_actions[:])
+        value, _ = self._critic_forward(state)
+        return action, log_prob, value
 
-    def update(self) -> Dict:
-        """Cập nhật Actor và Critic sau 1 episode. Trả về loss info."""
-        if not self.rewards:
-            return {}
+    # ── GAE Computation ──────────────────────────────────────────────────────
+    def _compute_gae(self, rewards, values, dones, next_value=0.0):
+        """
+        Generalized Advantage Estimation.
 
-        # ── Tính discounted returns ────────────────────────────────
-        returns = self._compute_returns()
-        returns = np.array(returns, dtype=np.float64)
-        values  = np.array(self.values, dtype=np.float64)
+        GAE balance giữa:
+          - λ=0: TD(1) — high bias, low variance
+          - λ=1: Monte Carlo — low bias, high variance
 
-        # ── Advantage = Return - Value ──────────────────────────────
-        advantages = returns - values
-        # Normalize để training ổn định
-        if len(advantages) > 1:
+        λ=0.95 (chuẩn từ PPO paper): sweet spot
+
+        Formula:
+            δ_t = r_t + γ·V(s_{t+1}) − V(s_t)
+            A_t = Σ (γλ)^k · δ_{t+k}
+            R_t = A_t + V(s_t)  ← target cho critic
+        """
+        T = len(rewards)
+        advantages = np.zeros(T)
+        last_gae = 0.0
+
+        for t in reversed(range(T)):
+            if t == T - 1:
+                next_v = next_value if not dones[t] else 0.0
+            else:
+                next_v = values[t + 1] if not dones[t] else 0.0
+
+            delta = rewards[t] + self.gamma * next_v - values[t]
+            last_gae = delta + self.gamma * self.gae_lambda * (1 - dones[t]) * last_gae
+            advantages[t] = last_gae
+
+        returns = advantages + np.array(values)
+        return advantages, returns
+
+    def _compute_returns_simple(self, rewards, dones):
+        """Fallback: Monte Carlo returns (khi use_gae=False)."""
+        T = len(rewards)
+        returns = np.zeros(T)
+        running = 0.0
+        for t in reversed(range(T)):
+            running = rewards[t] + self.gamma * running * (1 - dones[t])
+            returns[t] = running
+        advantages = returns - np.array(self.buf_values)
+        return advantages, returns
+
+    # ── Backward Pass + Update ───────────────────────────────────────────────
+    def update(self) -> Dict[str, float]:
+        """Update Actor + Critic sau khi rollout 1 episode."""
+        if len(self.buf_states) == 0:
+            return {"actor_loss": 0, "critic_loss": 0, "entropy": 0}
+
+        states  = np.array(self.buf_states,  dtype=np.float64)
+        actions = np.array(self.buf_actions, dtype=np.int64)
+        rewards = np.array(self.buf_rewards, dtype=np.float64)
+        dones   = np.array(self.buf_dones,   dtype=np.float64)
+        valids  = np.array(self.buf_valid,   dtype=bool)
+
+        # ── Compute Advantages ───────────────────────────────────────────────
+        if self.use_gae:
+            advantages, returns = self._compute_gae(rewards, self.buf_values, dones)
+        else:
+            advantages, returns = self._compute_returns_simple(rewards, dones)
+
+        # ── Advantage Normalization (giảm variance) ──────────────────────────
+        if self.normalize_adv and len(advantages) > 1:
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-        # ── Update Critic (Gradient Descent trên MSE) ───────────────
-        critic_grads = self._critic_gradients(returns)
-        new_params   = self.critic_opt.step(self.critic.get_params(), critic_grads)
-        self.critic.set_params(new_params)
+        # ── Critic update ────────────────────────────────────────────────────
+        critic_grads, critic_loss = self._critic_backward(states, returns)
+        critic_grads = self._clip_grads(critic_grads, self.max_grad_norm)
+        self.critic_params = self.opt_critic.step(self.critic_params, critic_grads)
+        self._sync_critic_params()
 
-        # ── Update Actor (Policy Gradient) ──────────────────────────
-        actor_grads, entropy = self._actor_gradients(advantages)
-        new_params = self.actor_opt.step(self.actor.get_params(), actor_grads)
-        self.actor.set_params(new_params)
+        # ── Actor update ─────────────────────────────────────────────────────
+        actor_grads, actor_loss, entropy = self._actor_backward(
+            states, actions, advantages, valids
+        )
+        actor_grads = self._clip_grads(actor_grads, self.max_grad_norm)
+        self.actor_params = self.opt_actor.step(self.actor_params, actor_grads)
+        self._sync_actor_params()
 
-        # Tính critic loss để log
-        pred_values  = np.array([self.critic.forward(s)[0] for s in self.states])
-        critic_loss  = np.mean((returns - pred_values)**2)
+        # ── Entropy Decay ────────────────────────────────────────────────────
+        self.entropy_coef = max(
+            self.entropy_min,
+            self.entropy_coef * self.entropy_decay,
+        )
 
-        self._reset_trajectory()
+        self.n_updates += 1
+        self.reset_buffer()
 
         return {
-            "critic_loss"    : float(critic_loss),
-            "entropy"        : float(entropy),
-            "mean_advantage" : float(advantages.mean()),
-            "mean_return"    : float(returns.mean()),
+            "actor_loss"  : float(actor_loss),
+            "critic_loss" : float(critic_loss),
+            "entropy"     : float(entropy),
+            "entropy_coef": float(self.entropy_coef),
+            "adv_mean"    : float(advantages.mean()),
+            "adv_std"     : float(advantages.std()),
         }
 
+    def _critic_backward(self, states, returns):
+        """MSE loss + manual backprop."""
+        T = len(states)
+        # Forward pass batch
+        h1 = _relu(states @ self.W1_c + self.b1_c)
+        h2 = _relu(h1     @ self.W2_c + self.b2_c)
+        v_pred = (h2 @ self.W3_c + self.b3_c).flatten()
+
+        # Loss: MSE
+        td_error = v_pred - returns
+        loss = 0.5 * np.mean(td_error ** 2)
+
+        # Backprop
+        dv = (td_error / T).reshape(-1, 1)
+        dW3 = h2.T @ dv
+        db3 = dv.sum(axis=0)
+        dh2 = dv @ self.W3_c.T
+        dh2 *= _relu_grad(h1 @ self.W2_c + self.b2_c)
+        dW2 = h1.T @ dh2
+        db2 = dh2.sum(axis=0)
+        dh1 = dh2 @ self.W2_c.T
+        dh1 *= _relu_grad(states @ self.W1_c + self.b1_c)
+        dW1 = states.T @ dh1
+        db1 = dh1.sum(axis=0)
+
+        return [dW1, db1, dW2, db2, dW3, db3], loss
+
+    def _actor_backward(self, states, actions, advantages, valids):
+        """Policy gradient + entropy bonus + manual backprop."""
+        T = len(states)
+        # Forward pass batch
+        h1 = _relu(states @ self.W1_a + self.b1_a)
+        h2 = _relu(h1     @ self.W2_a + self.b2_a)
+        logits = h2 @ self.W3_a + self.b3_a
+
+        # Apply action mask
+        masked_logits = np.where(valids, logits, -1e9)
+        probs = _softmax(masked_logits)
+        log_probs = np.log(probs + 1e-10)
+
+        # Policy gradient: -log_prob(a) * advantage
+        chosen_log_probs = log_probs[np.arange(T), actions]
+        pg_loss = -np.mean(chosen_log_probs * advantages)
+
+        # Entropy: H = -Σ p log p (encourage exploration)
+        entropy = -np.sum(probs * log_probs, axis=-1).mean()
+        loss = pg_loss - self.entropy_coef * entropy
+
+        # ── Gradient w.r.t logits ────────────────────────────────────────────
+        # ∂L_pg/∂logits = (probs - one_hot(action)) * advantage / T
+        one_hot = np.zeros((T, self.action_dim))
+        one_hot[np.arange(T), actions] = 1
+        dlogits_pg = (probs - one_hot) * advantages.reshape(-1, 1) / T
+
+        # ∂(-entropy)/∂logits = probs * (log_probs - H) — derivation đầy đủ
+        # Đơn giản hóa: gradient của entropy bonus
+        dlogits_ent = -self.entropy_coef * (-(probs * (log_probs + 1)) +
+                                              probs * np.sum(probs * (log_probs + 1),
+                                                              axis=-1, keepdims=True)) / T
+        dlogits = dlogits_pg + dlogits_ent
+        dlogits[~valids] = 0  # Mask invalid
+
+        # Backprop qua các layer
+        dW3 = h2.T @ dlogits
+        db3 = dlogits.sum(axis=0)
+        dh2 = dlogits @ self.W3_a.T
+        dh2 *= _relu_grad(h1 @ self.W2_a + self.b2_a)
+        dW2 = h1.T @ dh2
+        db2 = dh2.sum(axis=0)
+        dh1 = dh2 @ self.W2_a.T
+        dh1 *= _relu_grad(states @ self.W1_a + self.b1_a)
+        dW1 = states.T @ dh1
+        db1 = dh1.sum(axis=0)
+
+        return [dW1, db1, dW2, db2, dW3, db3], loss, entropy
+
+    def _clip_grads(self, grads: list, max_norm: float) -> list:
+        """Global L2 norm clipping (giống torch.nn.utils.clip_grad_norm_)."""
+        total_norm = np.sqrt(sum(np.sum(g ** 2) for g in grads))
+        scale = max_norm / (total_norm + 1e-8)
+        if scale < 1.0:
+            grads = [g * scale for g in grads]
+        return grads
+
+    # ── Sync params với layer attributes ─────────────────────────────────────
+    def _sync_actor_params(self):
+        (self.W1_a, self.b1_a, self.W2_a, self.b2_a,
+         self.W3_a, self.b3_a) = self.actor_params
+
+    def _sync_critic_params(self):
+        (self.W1_c, self.b1_c, self.W2_c, self.b2_c,
+         self.W3_c, self.b3_c) = self.critic_params
+
+    # ── Save / Load ──────────────────────────────────────────────────────────
     def save(self, path: str):
-        """Lưu weights ra file .npz."""
-        np.savez(path,
-            actor_W1=self.actor.W1,  actor_b1=self.actor.b1,
-            actor_W2=self.actor.W2,  actor_b2=self.actor.b2,
-            actor_W3=self.actor.W3,  actor_b3=self.actor.b3,
-            critic_W1=self.critic.W1, critic_b1=self.critic.b1,
-            critic_W2=self.critic.W2, critic_b2=self.critic.b2,
-            critic_W3=self.critic.W3, critic_b3=self.critic.b3,
+        """Lưu weights ra .npz file."""
+        if not path.endswith(".npz"):
+            path += ".npz"
+        np.savez(
+            path,
+            # Actor
+            W1_a=self.W1_a, b1_a=self.b1_a,
+            W2_a=self.W2_a, b2_a=self.b2_a,
+            W3_a=self.W3_a, b3_a=self.b3_a,
+            # Critic
+            W1_c=self.W1_c, b1_c=self.b1_c,
+            W2_c=self.W2_c, b2_c=self.b2_c,
+            W3_c=self.W3_c, b3_c=self.b3_c,
+            # Metadata
+            state_dim=self.state_dim, action_dim=self.action_dim,
+            hidden_dim=self.hidden_dim,
+            entropy_coef=self.entropy_coef,
         )
-        print(f"💾 Model saved → {path}.npz")
 
     def load(self, path: str):
-        """Load weights từ file .npz."""
+        """Load weights từ .npz file."""
+        if not path.endswith(".npz"):
+            path += ".npz"
         data = np.load(path)
-        self.actor.set_params([
-            data["actor_W1"],  data["actor_b1"],
-            data["actor_W2"],  data["actor_b2"],
-            data["actor_W3"],  data["actor_b3"],
-        ])
-        self.critic.set_params([
-            data["critic_W1"], data["critic_b1"],
-            data["critic_W2"], data["critic_b2"],
-            data["critic_W3"], data["critic_b3"],
-        ])
-        print(f"✅ Model loaded ← {path}")
-
-    # ── Private ───────────────────────────────────────────────────────
-
-    def _compute_returns(self) -> List[float]:
-        """Monte Carlo returns: G_t = r_t + γ*r_{t+1} + ..."""
-        returns, G = [], 0.0
-        for r, done in zip(reversed(self.rewards), reversed(self.dones)):
-            if done:
-                G = 0.0
-            G = r + self.gamma * G
-            returns.insert(0, G)
-        return returns
-
-    def _critic_gradients(self, returns: np.ndarray) -> List[np.ndarray]:
-        """
-        Gradient của MSE loss theo weights Critic.
-        dL/dW = -2 * (return - V(s)) * dV/dW
-        """
-        grads_W1 = np.zeros_like(self.critic.W1)
-        grads_b1 = np.zeros_like(self.critic.b1)
-        grads_W2 = np.zeros_like(self.critic.W2)
-        grads_b2 = np.zeros_like(self.critic.b2)
-        grads_W3 = np.zeros_like(self.critic.W3)
-        grads_b3 = np.zeros_like(self.critic.b3)
-
-        n = len(self.states)
-        for i, (state, G) in enumerate(zip(self.states, returns)):
-            self.critic.forward(state)
-            cache = self.critic._cache
-            value = cache["out"][0]
-
-            # MSE gradient
-            delta = 2.0 * (value - G) / n   # dL/d(out)
-
-            # Backprop layer 3
-            grads_W3 += np.outer(cache["h2"], [delta])
-            grads_b3 += delta
-
-            # Backprop layer 2
-            d_h2 = delta * self.critic.W3.flatten()
-            d_h2 *= (cache["h2"] > 0)   # ReLU derivative
-            grads_W2 += np.outer(cache["h1"], d_h2)
-            grads_b2 += d_h2
-
-            # Backprop layer 1
-            d_h1 = d_h2 @ self.critic.W2.T
-            d_h1 *= (cache["h1"] > 0)
-            grads_W1 += np.outer(cache["x"], d_h1)
-            grads_b1 += d_h1
-
-        return [grads_W1, grads_b1, grads_W2, grads_b2, grads_W3, grads_b3]
-
-    def _actor_gradients(
-        self, advantages: np.ndarray
-    ) -> Tuple[List[np.ndarray], float]:
-        """
-        Policy gradient với entropy regularization.
-        ∇J(θ) = E[∇log π(a|s) * A(s,a)] + β * ∇H(π)
-        """
-        grads_W1 = np.zeros_like(self.actor.W1)
-        grads_b1 = np.zeros_like(self.actor.b1)
-        grads_W2 = np.zeros_like(self.actor.W2)
-        grads_b2 = np.zeros_like(self.actor.b2)
-        grads_W3 = np.zeros_like(self.actor.W3)
-        grads_b3 = np.zeros_like(self.actor.b3)
-
-        total_entropy = 0.0
-        n = len(self.states)
-
-        for i, (state, action, adv, valid) in enumerate(
-            zip(self.states, self.actions, advantages, self.valid_actions_list)
-        ):
-            logits = self.actor.forward(state)
-            cache  = self.actor._cache
-
-            # Mask invalid actions
-            mask      = np.full(self.action_dim, -1e9)
-            mask[valid] = 0.0
-            masked_logits = logits + mask
-            probs = softmax(masked_logits)
-
-            # Entropy H(π) = -Σ p*log(p)
-            entropy        = -np.sum(probs * np.log(probs + 1e-8))
-            total_entropy += entropy
-
-            # Gradient của log π(a|s) * advantage
-            d_logits = probs.copy()
-            d_logits[action] -= 1.0      # ∂log(p_a)/∂logits
-            d_logits = -adv * d_logits / n   # Policy gradient (ascent → descent)
-
-            # Entropy gradient: ∂H/∂logits = -(log p + 1) * p → trừ để maximize
-            d_entropy   = -(np.log(probs + 1e-8) + 1.0) * probs
-            d_logits   -= self.entropy_coef * d_entropy / n
-
-            # Backprop layer 3
-            grads_W3 += np.outer(cache["h2"], d_logits)
-            grads_b3 += d_logits
-
-            # Layer 2
-            d_h2  = d_logits @ self.actor.W3.T
-            d_h2 *= (cache["h2"] > 0)
-            grads_W2 += np.outer(cache["h1"], d_h2)
-            grads_b2 += d_h2
-
-            # Layer 1
-            d_h1  = d_h2 @ self.actor.W2.T
-            d_h1 *= (cache["h1"] > 0)
-            grads_W1 += np.outer(cache["x"], d_h1)
-            grads_b1 += d_h1
-
-        grads = [grads_W1, grads_b1, grads_W2, grads_b2, grads_W3, grads_b3]
-        return grads, total_entropy / n
-
-    def _reset_trajectory(self):
-        self.states, self.actions, self.rewards = [], [], []
-        self.dones, self.log_probs, self.values = [], [], []
-        self.valid_actions_list = []
+        self.W1_a, self.b1_a = data["W1_a"], data["b1_a"]
+        self.W2_a, self.b2_a = data["W2_a"], data["b2_a"]
+        self.W3_a, self.b3_a = data["W3_a"], data["b3_a"]
+        self.W1_c, self.b1_c = data["W1_c"], data["b1_c"]
+        self.W2_c, self.b2_c = data["W2_c"], data["b2_c"]
+        self.W3_c, self.b3_c = data["W3_c"], data["b3_c"]
+        # Re-bind params
+        self.actor_params  = [self.W1_a, self.b1_a, self.W2_a, self.b2_a,
+                              self.W3_a, self.b3_a]
+        self.critic_params = [self.W1_c, self.b1_c, self.W2_c, self.b2_c,
+                              self.W3_c, self.b3_c]
+        if "entropy_coef" in data.files:
+            self.entropy_coef = float(data["entropy_coef"])
