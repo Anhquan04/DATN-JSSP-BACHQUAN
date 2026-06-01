@@ -1,24 +1,3 @@
-"""
-Training Script — A2C (NumPy) — RECIPE v3
-==========================================
-Cải tiến từ v2 sau khi phát hiện 3 vấn đề trên FT06:
-
-  ❌ v2: Greedy=149 >>> Stochastic best=66    (policy collapse)
-  ❌ v2: Mean stochastic ≈ Random              (chưa học được pattern tốt)
-  ❌ v2: Best save dựa trên 1 episode lucky    (không stable)
-
-  ✅ v3 fixes:
-       1. lr_actor: 1e-4 → 3e-4 (Adam default, học nhanh hơn, ổn định)
-       2. entropy_min: 0.005 → 0.01 (giữ exploration đủ để không stuck)
-       3. normalize_adv: True → False (cho reward sparse như JSSP)
-       4. Best policy = quick eval mỗi N episodes, KHÔNG dựa trên 1 episode
-       5. GAE λ: 0.95 → 0.9 (ít variance hơn trong reward thưa)
-
-Recipe v3 cho FT06:
-    episodes=2500, hidden=256, lr_actor=3e-4
-    eval_every=200 → check rolling performance định kỳ
-    Save model chỉ khi rolling eval thực sự cải thiện
-"""
 
 import argparse, os, csv
 import numpy as np
@@ -33,7 +12,7 @@ from baselines.dispatching_rules import run_dispatching_rule
 from data.instances              import get_instance, instance_info
 
 
-# ── Schema CSV ────────────────────────────────────────────────────────────────
+# ── Schema CSV ─
 TRAINING_LOG_FIELDS = [
     "run_id", "trained_at", "instance", "n_episodes",
     "episode", "reward", "makespan", "avg_reward_100",
@@ -54,7 +33,7 @@ SCHEDULE_FIELDS = [
 DETERMINISTIC_BASELINES = {"fifo", "spt", "lpt", "edd"}
 
 
-# ── Recipe v3: hyperparameters đã tune ────────────────────────────────────────
+# ── Recipe v3: hyperparameters đã tune 
 INSTANCE_RECIPES = {
     "3x3"  : {"episodes": 1000, "hidden": 128, "lr_actor": 3e-4, "eval_every": 100},
     "4x4"  : {"episodes": 1500, "hidden": 128, "lr_actor": 3e-4, "eval_every": 100},
@@ -64,7 +43,7 @@ INSTANCE_RECIPES = {
 }
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── Helpers 
 def _next_run_id(path: str) -> int:
     if not os.path.exists(path):
         return 1
@@ -138,9 +117,8 @@ def _quick_eval(env, agent, n_runs: int = 5) -> float:
     return float(np.mean(makespans))
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 #  MAIN TRAINING (Recipe v3)
-# ══════════════════════════════════════════════════════════════════════════════
+
 def train_numpy(
     instance_name : str   = "ft06",
     n_episodes    : int   = None,
@@ -160,7 +138,7 @@ def train_numpy(
     n_eval_runs   : int   = 30,
 ):
     """Train A2C với Recipe v3."""
-    # ── Auto-load recipe ──────────────────────────────────────────────────────
+    # ── Auto-load recipe 
     recipe = INSTANCE_RECIPES.get(instance_name, {})
     n_episodes  = n_episodes  or recipe.get("episodes", 2500)
     hidden_dim  = hidden_dim  or recipe.get("hidden",   256)
@@ -209,7 +187,7 @@ def train_numpy(
         normalize_adv = normalize_adv,
     )
 
-    # ── PHASE 1: Training ─────────────────────────────────────────────────────
+    # ── PHASE 1: Training 
     print(f"\n🚀 Training {n_episodes} episodes...\n")
 
     training_rows  = []
@@ -275,7 +253,7 @@ def train_numpy(
                   f"Best Eval: {best_eval_score:>6.1f}{roll_str}{mark} | "
                   f"H_coef: {ent_c:.4f}")
 
-    # ── PHASE 2: Final Evaluation ────────────────────────────────────────────
+    # ── PHASE 2: Final Evaluation 
     print(f"\n📊 Final Evaluation với BEST checkpoint (eval_score={best_eval_score:.1f})...")
     agent.load(best_model_path)
 
@@ -338,7 +316,7 @@ def train_numpy(
         })
     print(f"     mean={np.mean(random_ms):.1f}  std={np.std(random_ms):.2f}")
 
-    # ── PHASE 3: Export ──────────────────────────────────────────────────────
+    # ── PHASE 3: Export ─
     print(f"\n💾 Ghi CSV (Run #{run_id})...")
     _append_csv(training_rows, log_path,  TRAINING_LOG_FIELDS)
     _append_csv(eval_rows,     eval_path, EVALUATION_FIELDS)
@@ -350,7 +328,7 @@ def train_numpy(
                 run_id=run_id, trained_at=trained_at, instance=instance_name,
             )
 
-    # ── Summary ──────────────────────────────────────────────────────────────
+    # ── Summary 
     gap_lb = ((best_a2c_ms - info['critical_path_lb']) /
               info['critical_path_lb'] * 100)
     print(f"\n{'═'*64}")
@@ -362,7 +340,7 @@ def train_numpy(
     print(f"  Gap to LB (best stoch.)  : {gap_lb:+.1f}%")
     print(f"{'═'*64}")
 
-    # ── Diagnostic warnings ──────────────────────────────────────────────────
+    # ── Diagnostic warnings 
     if ms_g > best_a2c_ms * 1.5:
         print("\n⚠️  CẢNH BÁO: Greedy >> Stochastic best → policy chưa converge ổn định")
         print("   → Thử: tăng episodes (--episodes 4000), hoặc giảm lr_actor xuống 1e-4")

@@ -1,15 +1,3 @@
-"""
-Diagnostic Script — Analyze Training Learning Curve
-=====================================================
-
-Cách dùng:
-    python diagnostic.py results/training_log_ft06.csv
-
-Output: 3 biểu đồ .png
-    1. Episode reward progression
-    2. Makespan progression (training vs best eval)
-    3. Entropy decay
-"""
 
 import sys
 import pandas as pd

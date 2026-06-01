@@ -1,16 +1,9 @@
-"""
-Data Module — JSSP Instances
-==============================
-Chứa các benchmark instances chuẩn và generator ngẫu nhiên.
-
-Tác giả: Bạch Công Quân - ĐATN 2026
-"""
 
 import numpy as np
 from typing import List, Tuple
 
 
-# ── Benchmark Instances Chuẩn ────────────────────────────────────────────────
+# ── Benchmark Instances Chuẩn 
 
 # Fisher-Thompson 6x6 — Optimal makespan = 55
 FT06 = [

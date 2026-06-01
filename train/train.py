@@ -1,32 +1,11 @@
-"""
-main.py — Flask Web App: Job-Shop Scheduling Visualization
-===========================================================
-Entry point của toàn bộ project.
-
-Cách chạy:
-    python main.py
-
-Mở trình duyệt: http://localhost:5000
-
-Routes:
-    GET  /                          → Trang game visualization
-    GET  /api/instances             → Danh sách instances có sẵn
-    GET  /api/schedule/<inst>/<algo>→ Lấy schedule data
-    GET  /api/results               → Kết quả training tất cả instances
-    POST /api/train                 → Chạy training mới (background)
-    GET  /api/train/status          → Trạng thái training
-    GET  /api/compare/<inst>        → So sánh tất cả algorithms trên 1 instance
-
-Tác giả: Bạch Công Quân — ĐATN 2026
-GVHD  : ThS. Tạ Chí Hiếu
-"""
 
 import os, sys, json, time, threading
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 from flask import Flask, render_template, jsonify, request
 
 
-# ── Fix: numpy int64/float64 không serialize được sang JSON ──────────────────
+# ── Fix: numpy int64/float64 không serialize được sang JSON 
 class NumpyEncoder(json.JSONEncoder):
     """Custom JSON encoder — tự động convert numpy types → Python native types."""
     def default(self, obj):
@@ -57,7 +36,7 @@ from agent.a2c_numpy     import A2CAgentNumpy
 from baselines.dispatching_rules import run_dispatching_rule, evaluate_all_baselines
 from data.instances      import get_instance, instance_info, export_for_game
 
-# ── Flask App ─────────────────────────────────────────────────────────────────
+# ── Flask App 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 app.config["JSON_SORT_KEYS"] = False
 app.json_encoder = NumpyEncoder  # Dùng encoder tùy chỉnh
@@ -65,7 +44,7 @@ app.json_encoder = NumpyEncoder  # Dùng encoder tùy chỉnh
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
-# ── Training status (dùng cho /api/train/status) ──────────────────────────────
+# ── Training status (dùng cho /api/train/status) 
 _train_status = {
     "running" : False,
     "instance": None,
@@ -75,20 +54,14 @@ _train_status = {
     "log"     : [],
 }
 
-
-# ════════════════════════════════════════════════════════════════════════════
 #  PAGES
-# ════════════════════════════════════════════════════════════════════════════
 
 @app.route("/")
 def index():
     """Trang chính — Game visualization."""
     return render_template("index.html")
 
-
-# ════════════════════════════════════════════════════════════════════════════
 #  API — DATA
-# ════════════════════════════════════════════════════════════════════════════
 
 @app.route("/api/instances")
 def api_instances():
@@ -200,10 +173,7 @@ def api_results():
     with open(path) as f:
         return jsonify(json.load(f))
 
-
-# ════════════════════════════════════════════════════════════════════════════
 #  API — TRAINING
-# ════════════════════════════════════════════════════════════════════════════
 
 @app.route("/api/train", methods=["POST"])
 def api_train():
@@ -246,10 +216,7 @@ def api_train_status():
     """Polling endpoint — trả về trạng thái training hiện tại."""
     return jsonify(_train_status)
 
-
-# ════════════════════════════════════════════════════════════════════════════
 #  HELPERS
-# ════════════════════════════════════════════════════════════════════════════
 
 def _run_a2c(jobs_data, instance_name: str) -> dict:
     """
@@ -380,7 +347,7 @@ def _background_train(instance_name: str, n_episodes: int):
                        f"MS={ms} | Best={best_ms}")
                 _train_status["log"].append(msg)
 
-        # ── Export CSV ─────────────────────────────────────────────────────
+        # ── Export CSV 
         _train_status["log"].append("💾 Đang xuất CSV...")
 
         # 1. Training log
@@ -443,10 +410,7 @@ def _background_train(instance_name: str, n_episodes: int):
     finally:
         _train_status["running"] = False
 
-
-# ════════════════════════════════════════════════════════════════════════════
 #  RUN
-# ════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     print("\n" + "═"*55)

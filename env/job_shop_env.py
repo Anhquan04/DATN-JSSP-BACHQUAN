@@ -1,11 +1,3 @@
-"""
-Job-Shop Scheduling Environment (Gym-compatible)
-==================================================
-Mô hình hóa JSSP dưới dạng MDP để huấn luyện RL agent.
-
-Tác giả: Bạch Công Quân - ĐATN 2026
-GVHD: ThS. Tạ Chí Hiếu
-"""
 
 import numpy as np
 import gymnasium as gym
@@ -61,7 +53,7 @@ class JobShopEnv(_BASE):
 
         self._init_state_vars()
 
-    # ── Gymnasium API ─────────────────────────────────────────────────
+    # ── Gymnasium API
 
     def reset(self, seed: Optional[int] = None, options=None):
         if _use_gym:
@@ -113,7 +105,7 @@ class JobShopEnv(_BASE):
         print(f"  Job ops  : {self.job_op_index}")
         print(f"  Machines : {self.machine_available_at}")
 
-    # ── State & Reward ────────────────────────────────────────────────
+    # ── State & Reward 
 
     def _get_state(self) -> np.ndarray:
         """
@@ -157,7 +149,7 @@ class JobShopEnv(_BASE):
             reward += 50.0 * efficiency
         return reward
 
-    # ── Helpers ──────────────────────────────────────────────────────
+    # ── Helpers 
 
     def _init_state_vars(self):
         self.current_time         = 0

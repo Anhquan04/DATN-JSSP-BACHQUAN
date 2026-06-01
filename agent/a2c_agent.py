@@ -1,10 +1,3 @@
-"""
-A2C Agent — Advantage Actor-Critic (PyTorch)
-=============================================
-Lưu model dạng .pt — dùng cho train.py và evaluate.py
-
-Tác giả: Bạch Công Quân — ĐATN 2026
-"""
 
 import torch
 import torch.nn as nn
@@ -90,7 +83,7 @@ class A2CAgent:
              sum(p.numel() for p in self.critic.parameters()))
         print(f"✅ A2CAgent (PyTorch) | device={self.device} | params={n:,}")
 
-    # ── Inference ─────────────────────────────────────────────────────────────
+    # ── Inference 
 
     def select_action(
         self,
@@ -129,7 +122,7 @@ class A2CAgent:
         self.values.append(value)
         self.valid_actions_list.append(valid_actions)
 
-    # ── Training ──────────────────────────────────────────────────────────────
+    # ── Training 
 
     def update(self) -> dict:
         """Cập nhật Actor + Critic sau 1 episode."""
@@ -182,7 +175,7 @@ class A2CAgent:
             "entropy"    : float((entropy_sum / n).item()),
         }
 
-    # ── Checkpoint ────────────────────────────────────────────────────────────
+    # ── Checkpoint
 
     def save(self, path: str):
         """Lưu ra file .pt"""
@@ -203,7 +196,7 @@ class A2CAgent:
         self.critic_opt.load_state_dict(ckpt["critic_opt"])
         print(f"✅ Loaded ← {path}")
 
-    # ── Private ───────────────────────────────────────────────────────────────
+    # ── Private 
 
     def _compute_returns(self) -> List[float]:
         """G_t = r_t + γ·G_{t+1}"""

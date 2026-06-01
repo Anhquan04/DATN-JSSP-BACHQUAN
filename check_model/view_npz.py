@@ -1,12 +1,3 @@
-"""
-View NPZ File Content — Xem chi tiết tất cả arrays bên trong .npz
-===================================================================
-
-Cách dùng:
-    python view_npz.py results/model_ft06.npz
-    python view_npz.py results/model_ft06.npz --limit 20  (chỉ in 20 phần tử đầu)
-    python view_npz.py results/model_ft06.npz --save output.txt
-"""
 
 import sys
 import numpy as np

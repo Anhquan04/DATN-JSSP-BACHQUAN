@@ -1,12 +1,3 @@
-"""
-Visualization Utilities
-========================
-Vẽ tất cả biểu đồ cần thiết cho báo cáo ĐATN:
-  - Learning curves (reward vs episode)
-  - Gantt chart (schedule visualization)
-  - Box plots (so sánh các algorithm)
-  - Bar chart (trung bình makespan)
-"""
 
 import matplotlib
 matplotlib.use("Agg")   # Chạy không cần display
@@ -30,9 +21,7 @@ COLORS = {
 }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 #  1. LEARNING CURVES
-# ─────────────────────────────────────────────────────────────────────────────
 
 def plot_learning_curves(
     history: Dict,
@@ -54,7 +43,7 @@ def plot_learning_curves(
 
     episodes = range(1, len(history["episode_rewards"]) + 1)
 
-    # ── Plot 1: Episode Reward ──────────────────────────────────────
+    # ── Plot 1: Episode Reward 
     ax = axes[0, 0]
     rewards = history["episode_rewards"]
     ma = _moving_average(rewards, window)
@@ -67,7 +56,7 @@ def plot_learning_curves(
     ax.legend()
     ax.grid(alpha=0.3)
 
-    # ── Plot 2: Makespan per Episode ───────────────────────────────
+    # ── Plot 2: Makespan per Episode 
     ax = axes[0, 1]
     makespans = history["makespans"]
     ma_ms = _moving_average(makespans, window)
@@ -80,7 +69,7 @@ def plot_learning_curves(
     ax.legend()
     ax.grid(alpha=0.3)
 
-    # ── Plot 3: Actor & Critic Loss ────────────────────────────────
+    # ── Plot 3: Actor & Critic Loss 
     ax = axes[1, 0]
     if history.get("actor_losses"):
         ax.plot(history["actor_losses"], label="Actor Loss",
@@ -93,7 +82,7 @@ def plot_learning_curves(
         ax.legend()
         ax.grid(alpha=0.3)
 
-    # ── Plot 4: Entropy ────────────────────────────────────────────
+    # ── Plot 4: Entropy 
     ax = axes[1, 1]
     if history.get("entropies"):
         ax.plot(history["entropies"], color=COLORS["spt"], linewidth=1.2)
@@ -109,9 +98,7 @@ def plot_learning_curves(
     plt.close()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 #  2. GANTT CHART
-# ─────────────────────────────────────────────────────────────────────────────
 
 def plot_gantt(
     schedule: List[Dict],
@@ -187,9 +174,7 @@ def plot_gantt(
     plt.close()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 #  3. COMPARISON CHARTS
-# ─────────────────────────────────────────────────────────────────────────────
 
 def plot_comparison_boxplot(
     results: Dict[str, List[float]],
@@ -273,9 +258,7 @@ def plot_comparison_bar(
     plt.close()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 #  HELPER
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _moving_average(data: List[float], window: int) -> List[float]:
     """Tính moving average."""

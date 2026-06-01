@@ -1,32 +1,10 @@
-"""
-A2C Agent (NumPy) — IMPROVED VERSION
-=====================================
-Cải tiến từ vanilla A2C theo best practices từ research:
-
-  1. ✅ Generalized Advantage Estimation (GAE) — giảm variance gradient
-       Reference: Schulman et al. (2016), High-Dimensional Continuous Control...
-  2. ✅ Advantage Normalization — ổn định training trên episode dài
-  3. ✅ Entropy Coefficient Decay — bắt đầu explore, kết thúc exploit
-  4. ✅ Gradient Clipping — chống exploding gradient
-  5. ✅ Best Policy Tracking — lưu policy tốt nhất, không "quên"
-  6. ✅ Orthogonal Initialization — chuẩn cho RL networks
-
-Backwards compatible với version cũ qua flag `use_gae`.
-
-API giữ nguyên:
-    agent = A2CAgentNumpy(state_dim, action_dim)
-    action, log_prob, value = agent.select_action(state, valid_actions)
-    agent.store_transition(...)
-    losses = agent.update()
-    agent.save(path) / agent.load(path)
-"""
 
 import numpy as np
 import os
 from typing import Optional, Tuple, Dict, List
 
 
-# ── Adam Optimizer (NumPy implementation) ─────────────────────────────────────
+# ── Adam Optimizer (NumPy implementation) 
 class Adam:
     """Adam optimizer thuần NumPy — đồng bộ với torch.optim.Adam."""
 
@@ -49,7 +27,7 @@ class Adam:
         return params
 
 
-# ── Helper functions ──────────────────────────────────────────────────────────
+# ── Helper functions 
 def _orthogonal_init(shape: tuple, gain: float = 1.0) -> np.ndarray:
     """Orthogonal initialization — chuẩn cho RL theo paper PPO."""
     if len(shape) < 2:
@@ -69,21 +47,9 @@ def _softmax(x):
     e = np.exp(x)
     return e / np.sum(e, axis=-1, keepdims=True)
 
-
-# ══════════════════════════════════════════════════════════════════════════════
 #  A2C Agent
-# ══════════════════════════════════════════════════════════════════════════════
-class A2CAgentNumpy:
-    """
-    Actor-Critic agent với GAE, entropy decay, advantage normalization.
 
-    Cải tiến chính so với vanilla A2C:
-      - GAE (λ=0.95): Smooth advantage giữa Monte Carlo (high variance)
-        và TD-1 (high bias) → giảm variance gradient
-      - Entropy decay: explore → exploit theo thời gian
-      - Advantage normalization: giúp training ổn định khi reward scale lớn
-      - Gradient clipping: chống exploding gradient
-    """
+class A2CAgentNumpy:
 
     def __init__(
         self,
@@ -113,7 +79,7 @@ class A2CAgentNumpy:
         self.normalize_adv = normalize_adv
         self.use_gae       = use_gae
 
-        # ── Actor network: state → action probs ──────────────────────────────
+        # ── Actor network: state → action probs 
         # Output layer dùng gain=0.01 (theo PPO paper) để khởi đầu policy đều
         self.W1_a = _orthogonal_init((state_dim,  hidden_dim), gain=np.sqrt(2))
         self.b1_a = np.zeros(hidden_dim)
@@ -122,7 +88,7 @@ class A2CAgentNumpy:
         self.W3_a = _orthogonal_init((hidden_dim, action_dim), gain=0.01)
         self.b3_a = np.zeros(action_dim)
 
-        # ── Critic network: state → V(s) ─────────────────────────────────────
+        # ── Critic network: state → V(s) 
         self.W1_c = _orthogonal_init((state_dim,  hidden_dim), gain=np.sqrt(2))
         self.b1_c = np.zeros(hidden_dim)
         self.W2_c = _orthogonal_init((hidden_dim, hidden_dim), gain=np.sqrt(2))
@@ -130,7 +96,7 @@ class A2CAgentNumpy:
         self.W3_c = _orthogonal_init((hidden_dim, 1),          gain=1.0)
         self.b3_c = np.zeros(1)
 
-        # ── Optimizers ───────────────────────────────────────────────────────
+        # ── Optimizers 
         self.actor_params  = [self.W1_a, self.b1_a, self.W2_a, self.b2_a,
                               self.W3_a, self.b3_a]
         self.critic_params = [self.W1_c, self.b1_c, self.W2_c, self.b2_c,
@@ -138,13 +104,13 @@ class A2CAgentNumpy:
         self.opt_actor  = Adam(self.actor_params,  lr=lr_actor)
         self.opt_critic = Adam(self.critic_params, lr=lr_critic)
 
-        # ── Rollout buffer ───────────────────────────────────────────────────
+        # ── Rollout buffer
         self.reset_buffer()
 
-        # ── Metrics ──────────────────────────────────────────────────────────
+        # ── Metrics 
         self.n_updates = 0
 
-    # ── Buffer Management ────────────────────────────────────────────────────
+    # ── Buffer Management
     def reset_buffer(self):
         self.buf_states     = []
         self.buf_actions    = []
@@ -195,7 +161,7 @@ class A2CAgentNumpy:
         self.buf_values.append(value)
         self.buf_valid.append(self._to_mask(valid_actions))  # ← Chuẩn hóa
 
-    # ── Forward Pass ─────────────────────────────────────────────────────────
+    # ── Forward Pass 
     def _actor_forward(self, state: np.ndarray) -> tuple:
         """Returns: action_logits, hidden_activations (for backprop)."""
         h1 = _relu(state @ self.W1_a + self.b1_a)
@@ -244,7 +210,7 @@ class A2CAgentNumpy:
         value, _ = self._critic_forward(state)
         return action, log_prob, value
 
-    # ── GAE Computation ──────────────────────────────────────────────────────
+    # ── GAE Computation 
     def _compute_gae(self, rewards, values, dones, next_value=0.0):
         """
         Generalized Advantage Estimation.
@@ -288,7 +254,7 @@ class A2CAgentNumpy:
         advantages = returns - np.array(self.buf_values)
         return advantages, returns
 
-    # ── Backward Pass + Update ───────────────────────────────────────────────
+    # ── Backward Pass + Update 
     def update(self) -> Dict[str, float]:
         """Update Actor + Critic sau khi rollout 1 episode."""
         if len(self.buf_states) == 0:
@@ -300,23 +266,23 @@ class A2CAgentNumpy:
         dones   = np.array(self.buf_dones,   dtype=np.float64)
         valids  = np.array(self.buf_valid,   dtype=bool)
 
-        # ── Compute Advantages ───────────────────────────────────────────────
+        # ── Compute Advantages 
         if self.use_gae:
             advantages, returns = self._compute_gae(rewards, self.buf_values, dones)
         else:
             advantages, returns = self._compute_returns_simple(rewards, dones)
 
-        # ── Advantage Normalization (giảm variance) ──────────────────────────
+        # ── Advantage Normalization (giảm variance) 
         if self.normalize_adv and len(advantages) > 1:
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-        # ── Critic update ────────────────────────────────────────────────────
+        # ── Critic update 
         critic_grads, critic_loss = self._critic_backward(states, returns)
         critic_grads = self._clip_grads(critic_grads, self.max_grad_norm)
         self.critic_params = self.opt_critic.step(self.critic_params, critic_grads)
         self._sync_critic_params()
 
-        # ── Actor update ─────────────────────────────────────────────────────
+        # ── Actor update 
         actor_grads, actor_loss, entropy = self._actor_backward(
             states, actions, advantages, valids
         )
@@ -324,7 +290,7 @@ class A2CAgentNumpy:
         self.actor_params = self.opt_actor.step(self.actor_params, actor_grads)
         self._sync_actor_params()
 
-        # ── Entropy Decay ────────────────────────────────────────────────────
+        # ── Entropy Decay 
         self.entropy_coef = max(
             self.entropy_min,
             self.entropy_coef * self.entropy_decay,
@@ -390,7 +356,7 @@ class A2CAgentNumpy:
         entropy = -np.sum(probs * log_probs, axis=-1).mean()
         loss = pg_loss - self.entropy_coef * entropy
 
-        # ── Gradient w.r.t logits ────────────────────────────────────────────
+        # ── Gradient w.r.t logits 
         # ∂L_pg/∂logits = (probs - one_hot(action)) * advantage / T
         one_hot = np.zeros((T, self.action_dim))
         one_hot[np.arange(T), actions] = 1
@@ -426,7 +392,7 @@ class A2CAgentNumpy:
             grads = [g * scale for g in grads]
         return grads
 
-    # ── Sync params với layer attributes ─────────────────────────────────────
+    # ── Sync params với layer attributes 
     def _sync_actor_params(self):
         (self.W1_a, self.b1_a, self.W2_a, self.b2_a,
          self.W3_a, self.b3_a) = self.actor_params
@@ -435,7 +401,7 @@ class A2CAgentNumpy:
         (self.W1_c, self.b1_c, self.W2_c, self.b2_c,
          self.W3_c, self.b3_c) = self.critic_params
 
-    # ── Save / Load ──────────────────────────────────────────────────────────
+    # ── Save / Load 
     def save(self, path: str):
         """Lưu weights ra .npz file."""
         if not path.endswith(".npz"):

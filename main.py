@@ -1,32 +1,10 @@
-"""
-main.py — Flask Web App: Job-Shop Scheduling Visualization
-===========================================================
-Entry point của toàn bộ project.
-
-Cách chạy:
-    python main.py
-
-Mở trình duyệt: http://localhost:5000
-
-Routes:
-    GET  /                          → Trang game visualization
-    GET  /api/instances             → Danh sách instances có sẵn
-    GET  /api/schedule/<inst>/<algo>→ Lấy schedule data
-    GET  /api/results               → Kết quả training tất cả instances
-    POST /api/train                 → Chạy training mới (background)
-    GET  /api/train/status          → Trạng thái training
-    GET  /api/compare/<inst>        → So sánh tất cả algorithms trên 1 instance
-
-Tác giả: Bạch Công Quân — ĐATN 2026
-GVHD  : ThS. Tạ Chí Hiếu
-"""
 
 import os, sys, json, time, threading
 import numpy as np
 from flask import Flask, render_template, jsonify, request
 
 
-# ── Fix: numpy int64/float64 không serialize được sang JSON ──────────────────
+# ── Fix: numpy int64/float64 không serialize được sang JSON 
 class NumpyEncoder(json.JSONEncoder):
     """Custom JSON encoder — tự động convert numpy types → Python native types."""
     def default(self, obj):
@@ -57,7 +35,7 @@ from agent.a2c_numpy     import A2CAgentNumpy
 from baselines.dispatching_rules import run_dispatching_rule, evaluate_all_baselines
 from data.instances      import get_instance, instance_info, export_for_game
 
-# ── Instance Cache — đảm bảo instance random ổn định trong session ────────
+# ── Instance Cache — đảm bảo instance random ổn định trong session 
 # Vì một số instance được generate random, cần cache để mọi route gọi
 # get_instance(name) đều trả về CÙNG 1 data → kết quả nhất quán giữa các tabs
 _INSTANCE_CACHE = {}
@@ -68,7 +46,7 @@ def _cached_instance(name):
         _INSTANCE_CACHE[name] = get_instance(name)
     return _INSTANCE_CACHE[name]
 
-# ── Flask App ─────────────────────────────────────────────────────────────────
+# ── Flask App 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 app.config["JSON_SORT_KEYS"] = False
 app.json_encoder = NumpyEncoder  # Dùng encoder tùy chỉnh
@@ -76,7 +54,7 @@ app.json_encoder = NumpyEncoder  # Dùng encoder tùy chỉnh
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
-# ── Training status (dùng cho /api/train/status) ──────────────────────────────
+# ── Training status (dùng cho /api/train/status) 
 _train_status = {
     "running" : False,
     "instance": None,
@@ -87,9 +65,7 @@ _train_status = {
 }
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  PAGES
-# ════════════════════════════════════════════════════════════════════════════
 
 @app.route("/")
 def index():
@@ -97,9 +73,7 @@ def index():
     return render_template("index.html")
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  API — DATA
-# ════════════════════════════════════════════════════════════════════════════
 
 @app.route("/api/instances")
 def api_instances():
@@ -212,9 +186,7 @@ def api_results():
         return jsonify(json.load(f))
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  API — TRAINING
-# ════════════════════════════════════════════════════════════════════════════
 
 @app.route("/api/train", methods=["POST"])
 def api_train():
@@ -258,11 +230,9 @@ def api_train_status():
     return jsonify(_train_status)
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  HELPERS
-# ════════════════════════════════════════════════════════════════════════════
 
-# ── A2C Result Cache — đảm bảo cùng instance trả CÙNG kết quả ────────────
+# ── A2C Result Cache — đảm bảo cùng instance trả CÙNG kết quả 
 # Key = (instance_name, model_file_mtime) → tự invalidate khi retrain
 _A2C_RESULT_CACHE = {}
 
@@ -279,7 +249,7 @@ def _run_a2c(jobs_data, instance_name: str) -> dict:
     env        = JobShopEnv(jobs_data)
     model_path = os.path.join(RESULTS_DIR, f"model_{instance_name}.npz")
 
-    # ── Cache lookup ─────────────────────────────────────────────────────
+    # ── Cache lookup 
     if os.path.exists(model_path):
         mtime     = os.path.getmtime(model_path)
         cache_key = (instance_name, mtime)
@@ -429,7 +399,7 @@ def _background_train(instance_name: str, n_episodes: int):
                        f"MS={ms} | Best={best_ms}")
                 _train_status["log"].append(msg)
 
-        # ── Export CSV ─────────────────────────────────────────────────────
+        # ── Export CSV 
         _train_status["log"].append("💾 Đang xuất CSV...")
 
         # 1. Training log
@@ -497,15 +467,9 @@ def _background_train(instance_name: str, n_episodes: int):
         _train_status["running"] = False
 
 
-# ════════════════════════════════════════════════════════════════════════════
+
 #  RUN
-# ════════════════════════════════════════════════════════════════════════════
-
-
-
-# ════════════════════════════════════════════════════════════════════════════
 #  API — ĐÁNH GIÁ TỔNG HỢP
-# ════════════════════════════════════════════════════════════════════════════
 
 DIFFICULTY_TIERS = {
     # FIX: dùng cùng key với api_instances() để Tab Trực quan hóa và Tab Đánh giá
@@ -553,14 +517,11 @@ def api_evaluation_full():
     return jsonify(_to_python(_eval_cache))
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  GREEDY BEST-FIT ALLOCATOR + PRIORITY TRIAGE SYSTEM
-# ────────────────────────────────────────────────────────────────────────────
 #  Thêm hệ thống Priority Triage theo yêu cầu thầy Hiếu:
 #    🔴 CẤP BÁCH — bug thực sự, phải fix ngay (không xếp đủ buổi, conflict slot)
 #    🟡 TRUNG BÌNH — vấn đề logic nhưng vẫn xếp được (kéo dài makespan, FIFO ép buộc)
 #    🟢 CẢNH BÁO   — chưa có vấn đề nhưng tiềm ẩn rủi ro (slot quá tải, ít redundancy)
-# ════════════════════════════════════════════════════════════════════════════
 
 DAYS_VN    = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7"]
 PERIODS_VN = ["Sáng", "Chiều"]
@@ -682,7 +643,7 @@ def _priority_triage(classes_meta, results, makespan_a2c, makespan_fifo):
     """
     issues = []
 
-    # ─── CẤP BÁCH 🔴 ────────────────────────────────────────────────────────
+    # ─── CẤP BÁCH 🔴
     # 1. A2C có lớp không xếp đủ buổi
     a2c_unscheduled = results["a2c"].get("unscheduled", [])
     if a2c_unscheduled:
@@ -709,7 +670,7 @@ def _priority_triage(classes_meta, results, makespan_a2c, makespan_fifo):
                 "affected_class": cls["name"],
             })
 
-    # ─── TRUNG BÌNH 🟡 ──────────────────────────────────────────────────────
+    # ─── TRUNG BÌNH 🟡
     # 3. A2C makespan vượt duration_weeks (kéo dài lịch)
     max_dur = max(c["duration_weeks"] for c in classes_meta)
     if makespan_a2c > max_dur:
@@ -745,7 +706,7 @@ def _priority_triage(classes_meta, results, makespan_a2c, makespan_fifo):
             "suggestion": "Có thể nhận thêm lớp dạy hoặc gộp các lớp ít buổi/tuần",
         })
 
-    # ─── CẢNH BÁO 🟢 ────────────────────────────────────────────────────────
+    # ─── CẢNH BÁO 🟢
     # 6. Slot bị "đông đúc" — nhiều lớp Strict cùng tranh
     slot_pressure = {}
     for cls in classes_meta:
@@ -834,7 +795,7 @@ def _schedule_classes(classes_config):
     for r in (a2c_r, fifo_r, spt_r, edd_r):
         r["schedule"] = _enrich_schedule(r["schedule"])
 
-    # ─── PRIORITY TRIAGE ───────────────────────────────────────────────────
+    # ─── PRIORITY TRIAGE
     triage_issues = _priority_triage(
         cleaned,
         {"a2c": a2c_r, "fifo": fifo_r},

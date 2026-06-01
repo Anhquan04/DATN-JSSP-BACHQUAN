@@ -104,8 +104,8 @@ python train/train_numpy.py --instance ft06 --episodes 2500
 **Xem model đã train:**
 
 ```bash
-python diagnostic.py results/training_log_ft06.csv   
-python view_npz.py results/model_ft06.npz 
+python check_model/diagnostic.py results/training_log_ft06.csv   
+python check_model/view_npz.py results/model_ft06.npz 
 ```
 
 ### 📦 `train.py` + `a2c_agent.py` — PHIÊN BẢN PHỤ (PyTorch)
@@ -255,7 +255,6 @@ python evaluation/evaluate.py \
 ```bash
 python diagnostic.py results/training_log_ft06.csv   # Learning curves
 python view_npz.py results/model_ft06.npz --limit 10  # Xem weights
-python inspect_model.py results/model_ft06.npz --plot  # Thống kê + histogram
 ```
 
 ### 5. Jupyter Notebook

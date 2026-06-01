@@ -1,15 +1,3 @@
-"""
-Baseline Algorithms — Dispatching Rules
-=========================================
-Cài đặt các quy tắc ưu tiên (Priority Dispatching Rules) để so sánh với A2C.
-
-Các baseline:
-  - FIFO : First In, First Out — chọn job đến trước
-  - SPT  : Shortest Processing Time — chọn operation ngắn nhất
-  - EDD  : Earliest Due Date — chọn job có deadline sớm nhất
-  - LPT  : Longest Processing Time — chọn operation dài nhất
-  - RANDOM: Ngẫu nhiên (lower bound để so sánh)
-"""
 
 import numpy as np
 from typing import List, Tuple, Dict

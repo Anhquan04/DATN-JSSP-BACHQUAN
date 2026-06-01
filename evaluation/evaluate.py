@@ -1,14 +1,3 @@
-"""
-Evaluate & Compare — A2C vs Baselines (với CSV output đầy đủ)
-==============================================================
-Cách chạy:
-    python evaluation/evaluate.py --instance ft06 --model_path results/model_ft06.npz
-
-Output:
-    - results/eval_results_{instance}.csv ← Dễ xem trong Excel
-    - results/eval_results_{instance}.json ← Để code xử lý
-    - results/training_records.csv ← Tracking trained_at
-"""
 
 import argparse
 import os
@@ -39,7 +28,7 @@ from scipy import stats
 DETERMINISTIC_BASELINES = {"FIFO", "SPT", "LPT", "EDD"}
 
 
-# ── Helper: Timestamp utilities ─────────────────────────────────────────────
+# ── Helper: Timestamp utilities 
 def get_iso_timestamp() -> str:
     """
     Tạo ISO 8601 timestamp (UTC timezone aware).
@@ -54,7 +43,7 @@ def get_iso_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec='microseconds')
 
 
-# ── Helper: CSV management ──────────────────────────────────────────────────
+# ── Helper: CSV management 
 def ensure_evaluation_csv_headers(csv_path: str):
     """
     Ensure CSV exists với headers đúng cho evaluation results.
@@ -193,7 +182,7 @@ def append_training_record(
         print(f"❌ Lỗi ghi CSV: {e}")
 
 
-# ── Helper: convert numpy types → Python native ───────────────────────────────
+# ── Helper: convert numpy types → Python native
 def _to_serializable(obj):
     """Đệ quy convert numpy types sang Python native để JSON không bị lỗi."""
     if isinstance(obj, dict):
@@ -382,9 +371,7 @@ def run_full_evaluation(
         )
     print("═" * 72)
 
-    # ────────────────────────────────────────────────────────────────────────
     # PHẦN QUAN TRỌNG: Tính statistical tests & ghi vào CSV
-    # ────────────────────────────────────────────────────────────────────────
     
     print("\n📊 So sánh thống kê A2C vs Baselines (α=0.05):")
     print(f"  {'Algorithm':<10} {'Phương pháp':<30} {'p-value':>10} {'Kết luận':>22}")
@@ -452,9 +439,8 @@ def run_full_evaluation(
                 f"  {algo:<10} {'Wilcoxon Signed-Rank':<30} {p:>10.4f} {conclusion:>22}"
             )
 
-    # ────────────────────────────────────────────────────────────────────────
     # GHI VÀO CSV
-    # ────────────────────────────────────────────────────────────────────────
+    
     print(f"\n💾 Ghi kết quả vào CSV: {eval_csv_path}")
     ensure_evaluation_csv_headers(eval_csv_path)
 
